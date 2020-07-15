@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -8,9 +9,12 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"log"
 	"path/filepath"
 	"strings"
 )
+
+const ShellToUse = "bash"
 
 type pattern struct {
 	Flags    string   `json:"flags,omitempty"`
@@ -57,7 +61,11 @@ func main() {
 	patName := flag.Arg(0)
 	files := flag.Arg(1)
 	if files == "" {
-		files = "."
+		pwd, err := os.Getwd()
+		if err != nil {
+			fmt.Println(err)
+		}
+		files = pwd + "/*"
 	}
 
 	patDir, err := getPatternDir()
@@ -93,28 +101,52 @@ func main() {
 		pat.Pattern = "(" + strings.Join(pat.Patterns, "|") + ")"
 	}
 
-	if dumpMode {
-		fmt.Printf("grep %v %q %v\n", pat.Flags, pat.Pattern, files)
-
-	} else {
 		var cmd *exec.Cmd
 		operator := "grep"
 		if pat.Engine != "" {
 			operator = pat.Engine
 		}
 
+		var cmd_string =  fmt.Sprintf(" %v %v %q %v ",operator, pat.Flags, pat.Pattern, files )
+		var dump_string =  fmt.Sprintf("bash -c  %v %v %q %v ",operator, pat.Flags, pat.Pattern, files )
+		
+		if dumpMode {
+				fmt.Printf(dump_string)
+				fmt.Printf("\n")
+				os.Exit(0)
+		} 
+
 		if stdinIsPipe() {
 			cmd = exec.Command(operator, pat.Flags, pat.Pattern)
+			cmd.Stdin = os.Stdin
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			cmd.Run()
+		
 		} else {
-			cmd = exec.Command(operator, pat.Flags, pat.Pattern, files)
+			err, out, errout := Shellout(cmd_string)
+			if err != nil {
+				log.Printf("error: %v\n", err)
+			}
+			fmt.Println("--- stdout ---")
+			fmt.Println(out)
+			fmt.Println("--- stderr ---")
+			fmt.Println(errout)
 		}
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		cmd.Run()
-	}
+
 
 }
+
+func Shellout(command string) (error, string, string) {
+    var stdout bytes.Buffer
+    var stderr bytes.Buffer
+    cmd := exec.Command(ShellToUse, "-c", command)
+    cmd.Stdout = &stdout
+    cmd.Stderr = &stderr
+    err := cmd.Run()
+    return err, stdout.String(), stderr.String()
+}
+
 
 func getPatternDir() (string, error) {
 	usr, err := user.Current()
